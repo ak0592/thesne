@@ -101,10 +101,10 @@ def find_Ys(Xs_shared, Ys_shared, sigmas_shared, N, steps, output_dims,
     return Ys
 
 
-def dynamic_tsne(Xs, perplexity=30, Ys=None, output_dims=2, n_epochs=1000,
+def dynamic_tsne(Xs, perplexity=70, Ys=None, output_dims=2, n_epochs=1000,
                  initial_lr=2400, final_lr=200, lr_switch=250, init_stdev=1e-4,
                  sigma_iters=50, initial_momentum=0.5, final_momentum=0.8,
-                 momentum_switch=250, lmbda=0.0, metric='euclidean',
+                 momentum_switch=250, lmbda=0.1, metric='euclidean',
                  random_state=None, verbose=1):
     """Compute sequence of projections from a sequence of matrices of
     observations (or distances) using dynamic t-SNE.
@@ -212,5 +212,15 @@ def dynamic_tsne(Xs, perplexity=30, Ys=None, output_dims=2, n_epochs=1000,
                  n_epochs, initial_lr, final_lr, lr_switch, init_stdev,
                  initial_momentum, final_momentum, momentum_switch, lmbda,
                  metric, verbose)
+    
+    # add step axis
+    Ys_for_df = []
+    for s in range(steps):
+        step = np.array([s] * N)
+        Ys_for_df.append(np.concatenate((Ys[s], np.expand_dims(step, axis=1)), axis=1))
+    Ys_for_df = np.array(Ys_for_df).reshape(-1, output_dims+1)
 
-    return Ys
+    columns = [f'dim{i}' for i in range(1, output_dims + 1)]
+    columns.append('step')
+
+    return Ys, Ys_for_df, columns
