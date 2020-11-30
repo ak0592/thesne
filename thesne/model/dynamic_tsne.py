@@ -4,9 +4,9 @@ import theano.tensor as T
 
 from sklearn.utils import check_random_state
 
-from core import floath
-from core import cost_var
-from core import find_sigma
+from .core import floath
+from .core import cost_var
+from .core import find_sigma
 
 
 def movement_penalty(Ys, N):
