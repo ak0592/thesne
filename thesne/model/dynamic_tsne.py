@@ -1,183 +1,232 @@
 import numpy as np
-import theano
-import theano.tensor as T
+import torch
 
 from sklearn.utils import check_random_state
-
-from .core import floath
-from .core import cost_var
-from .core import find_sigma
+from model.core import floath, cost_var, find_sigma, calc_original_simul_prob, calc_visible_simul_prob, calc_square_euclidean_norms
 
 
-def movement_penalty(all_step_visible_data, N):
-    penalties = []
-    for t in range(len(all_step_visible_data) - 1):
-        penalties.append(T.sum((all_step_visible_data[t] - all_step_visible_data[t + 1]) ** 2))
+def movement_penalty(all_step_visible_data_tensor, N, device='cpu'):
+    penalties = torch.zeros(all_step_visible_data_tensor.size()[0], device=device)
+    for t in range(all_step_visible_data_tensor.size()[0] - 1):
+        penalties[t] = torch.sum((all_step_visible_data_tensor[t] - all_step_visible_data_tensor[t + 1]) ** 2)
 
-    return T.sum(penalties) / (2 * N)
+    return torch.sum(penalties) / (2 * N)
 
 
-def find_all_step_visible_data(all_step_original_data_shared, all_step_visible_data_shared, sigmas_shared, N, steps,
+def create_subtract_matrix(one_step_tensor, device='cpu'):
+    N, dims = one_step_tensor.size()
+    subtract_matrix = torch.zeros(N, N, dims).float().to(device)
+    for i in range(N):
+        for j in range(dims):
+            subtract_matrix[i, j] = one_step_tensor[i] - one_step_tensor[j]
+
+    return subtract_matrix
+
+
+def find_all_step_visible_data(all_step_original_data, all_step_visible_data, all_step_sigmas, N, steps,
                                output_dims, n_epochs, initial_lr, final_lr, lr_switch, initial_momentum,
-                               final_momentum, momentum_switch, penalty_lambda, metric, verbose=0):
+                               final_momentum, momentum_switch, penalty_lambda, metric, verbose=0, device='cpu'):
     """Optimize cost wrt all_step_visible_data[t], simultaneously for all t"""
 
     # Optimization hyper-parameters
-    initial_lr = np.array(initial_lr, dtype=floath)
-    final_lr = np.array(final_lr, dtype=floath)
-    initial_momentum = np.array(initial_momentum, dtype=floath)
-    final_momentum = np.array(final_momentum, dtype=floath)
-
-    lr = T.fscalar('lr')
-    lr_shared = theano.shared(initial_lr)
-
-    momentum = T.fscalar('momentum')
-    momentum_shared = theano.shared(initial_momentum)
+    lr_tensor = torch.from_numpy(np.array(initial_lr, dtype=floath)).to(device)
+    momentum_tensor = torch.from_numpy(np.array(initial_momentum, dtype=floath)).to(device)
 
     # Penalty hyper-parameter
-    penalty_lambda_var = T.fscalar('penalty_lambda')
-    penalty_lambda_shared = theano.shared(np.array(penalty_lambda, dtype=floath))
-
-    # Yv velocities
-    all_step_visible_progress_shared = []
-    zero_velocities = np.zeros((N, output_dims), dtype=floath)
-    for t in range(steps):
-        all_step_visible_progress_shared.append(theano.shared(np.array(zero_velocities)))
+    penalty_lambda_tensor = torch.from_numpy(np.array(penalty_lambda, dtype=floath)).to(device)
 
     # Cost
-    all_step_original_data_vars = T.fmatrices(steps)
-    all_step_visible_data_vars = T.fmatrices(steps)
-    all_step_visible_progress_vars = T.fmatrices(steps)
-    sigmas_vars = T.fvectors(steps)
+    all_step_original_data_tensors = torch.from_numpy(all_step_original_data).clone().to(device)
+    all_step_visible_data_tensors = torch.tensor(all_step_visible_data.copy()).float().to(device)
+    all_step_visible_progress_tensors = torch.from_numpy(np.zeros((steps, N, output_dims), dtype=floath)).to(device)
+    all_step_sigmas_tensors = torch.from_numpy(all_step_sigmas).clone().to(device)
 
-    c_vars = []
-    for t in range(steps):
-        c_vars.append(cost_var(all_step_original_data_vars[t], all_step_visible_data_vars[t], sigmas_vars[t], metric))
-
-    cost = T.sum(c_vars) + penalty_lambda_var * movement_penalty(all_step_visible_data_vars, N)
-
-    # Setting update for all_step_visible_data velocities
-    grad_Y = T.grad(cost, all_step_visible_data_vars)
-
-    givens = {lr: lr_shared, momentum: momentum_shared, penalty_lambda_var: penalty_lambda_shared}
-    updates = []
-    for t in range(steps):
-        updates.append((all_step_visible_progress_shared[t], momentum * all_step_visible_progress_vars[t] - lr * grad_Y[t]))
-
-        givens[all_step_original_data_vars[t]] = all_step_original_data_shared[t]
-        givens[all_step_visible_data_vars[t]] = all_step_visible_data_shared[t]
-        givens[all_step_visible_progress_vars[t]] = all_step_visible_progress_shared[t]
-        givens[sigmas_vars[t]] = sigmas_shared[t]
-
-    update_Yvs = theano.function([], cost, givens=givens, updates=updates)
-
-    # Setting update for all_step_visible_data positions
-    updates = []
-    givens = dict()
-    for t in range(steps):
-        updates.append((all_step_visible_data_shared[t], all_step_visible_data_vars[t] + all_step_visible_progress_vars[t]))
-        givens[all_step_visible_data_vars[t]] = all_step_visible_data_shared[t]
-        givens[all_step_visible_progress_vars[t]] = all_step_visible_progress_shared[t]
-
-    update_all_step_visible_data = theano.function([], [], givens=givens, updates=updates)
-
+    all_step_visible_data_tensors.requires_grad_(True)
     # Momentum-based gradient descent
-    for epoch in range(n_epochs):
+    epoch = 0
+    prev_cost = 0
+    while True:
         if epoch == lr_switch:
-            lr_shared.set_value(final_lr)
+            lr_tensor = torch.from_numpy(np.array(final_lr, dtype=floath)).to(device)
         if epoch == momentum_switch:
-            momentum_shared.set_value(final_momentum)
+            momentum_tensor = torch.from_numpy(np.array(final_momentum, dtype=floath)).to(device)
 
-        c = update_Yvs()
-        update_all_step_visible_data()
+        c_vars = torch.zeros(steps).to(device)
+        for t in range(steps):
+            c_vars[t] = cost_var(all_step_original_data_tensors[t], all_step_visible_data_tensors[t], all_step_sigmas_tensors[t],
+                                 metric, device=device)
+
+        penalty = movement_penalty(all_step_visible_data_tensors, N, device=device)
+        kl_loss = torch.sum(c_vars)
+        cost = kl_loss + penalty_lambda_tensor * penalty
+        cost.backward()
+
+        with torch.no_grad():
+            # Setting update for all_step_visible_data velocities
+            all_step_visible_progress_tensors = \
+                momentum_tensor * all_step_visible_progress_tensors - lr_tensor * all_step_visible_data_tensors.grad
+            # Setting update for all_step_visible_data positions
+            all_step_visible_data_tensors += all_step_visible_progress_tensors
+            all_step_visible_data_tensors.grad.zero_()
+
         if verbose:
-            print('Epoch: {0}. Cost: {1:.6f}.'.format(epoch + 1, float(c)))
+            print(f'Epoch: {epoch + 1}. KL_loss: {float(kl_loss.to("cpu").detach().numpy().copy())}, penalty: {float(penalty.to("cpu").detach().numpy().copy())}')
+        epoch += 1
 
-    all_step_visible_data = []
+        if epoch >= n_epochs and torch.tensor(prev_cost).float().to(device) - cost < torch.tensor(0.00001).float().to(device):
+            break
+        prev_cost = float(cost.to("cpu").detach().numpy().copy())
+
+    final_all_step_visible_data = []
     for t in range(steps):
-        all_step_visible_data.append(np.array(all_step_visible_data_shared[t].get_value(), dtype=floath))
+        final_all_step_visible_data.append(all_step_visible_data_tensors[t].to('cpu').detach().numpy().copy())
 
-    return all_step_visible_data
+    return final_all_step_visible_data
+
+
+# def find_all_step_visible_data(all_step_original_data, all_step_visible_data, all_step_sigmas, N, steps,
+#                                output_dims, n_epochs, initial_lr, final_lr, lr_switch, initial_momentum,
+#                                final_momentum, momentum_switch, penalty_lambda, metric, verbose=0, device='cpu'):
+#     """Optimize cost wrt all_step_visible_data[t], simultaneously for all t"""
+#
+#     # Optimization hyper-parameters
+#     lr_tensor = torch.from_numpy(np.array(initial_lr, dtype=floath)).to(device)
+#     momentum_tensor = torch.from_numpy(np.array(initial_momentum, dtype=floath)).to(device)
+#
+#     # Penalty hyper-parameter
+#     penalty_lambda_tensor = torch.from_numpy(np.array(penalty_lambda, dtype=floath)).to(device)
+#
+#     # Cost
+#     all_step_original_data_tensors = torch.from_numpy(all_step_original_data).clone().to(device)
+#     all_step_visible_data_tensors = torch.tensor(all_step_visible_data.copy()).float().to(device)
+#     all_step_visible_progress_tensors = torch.from_numpy(np.zeros((steps, N, output_dims), dtype=floath)).to(device)
+#     all_step_sigmas_tensors = torch.from_numpy(all_step_sigmas).clone().to(device)
+#
+#     # Momentum-based gradient descent
+#     for epoch in range(n_epochs):
+#         if epoch == lr_switch:
+#             lr_tensor = torch.from_numpy(np.array(final_lr, dtype=floath)).to(device)
+#         if epoch == momentum_switch:
+#             momentum_tensor = torch.from_numpy(np.array(final_momentum, dtype=floath)).to(device)
+#
+#         all_step_grad_kl_loss = torch.zeros(steps, N, output_dims).to(device)
+#         all_step_v = torch.zeros(steps, N, output_dims).to(device)
+#         c_vars = torch.zeros(steps).to(device)
+#         for t in range(steps):
+#             subtract_mat = create_subtract_matrix(all_step_visible_data_tensors[t], device).permute(2, 0, 1)
+#             original_simul_prob = calc_original_simul_prob(all_step_original_data_tensors[t], all_step_sigmas_tensors[t], metric)
+#             visual_simul_prob = calc_visible_simul_prob(all_step_visible_data_tensors[t])
+#             denominator = calc_square_euclidean_norms(all_step_visible_data_tensors[t]) + 1
+#
+#             all_step_grad_kl_loss[t] = 4 * (subtract_mat * (original_simul_prob - visual_simul_prob) / denominator).sum(dim=1).permute(1, 0)
+#             if t == 0:
+#                 all_step_v[t] = all_step_visible_data_tensors[t] - all_step_visible_data_tensors[t+1]
+#             elif t == steps - 1:
+#                 all_step_v[t] = all_step_visible_data_tensors[t] - all_step_visible_data_tensors[t - 1]
+#             else:
+#                 all_step_v[t] = 2 * all_step_visible_data_tensors[t] - \
+#                                 (all_step_visible_data_tensors[t - 1] + all_step_visible_data_tensors[t + 1])
+#
+#             c_vars[t] = cost_var(all_step_original_data_tensors[t], all_step_visible_data_tensors[t],
+#                                  all_step_sigmas_tensors[t], metric, device=device)
+#         cost = torch.sum(c_vars) + penalty_lambda_tensor * movement_penalty(all_step_visible_data_tensors, N, device=device)
+#
+#         all_step_cost_grad = all_step_grad_kl_loss + penalty_lambda_tensor * all_step_v / N
+#
+#         # Setting update for all_step_visible_data velocities
+#         all_step_visible_progress_tensors = \
+#             momentum_tensor * all_step_visible_progress_tensors - lr_tensor * all_step_cost_grad
+#         # Setting update for all_step_visible_data positions
+#         all_step_visible_data_tensors += all_step_visible_progress_tensors
+#
+#         if verbose:
+#             print('Epoch: {0}. Cost: {1:.6f}.'.format(epoch + 1, float(cost.to('cpu').detach().numpy().copy())))
+#
+#     final_all_step_visible_data = []
+#     for t in range(steps):
+#         final_all_step_visible_data.append(all_step_visible_data_tensors[t].to('cpu').detach().numpy().copy())
+#
+#     return final_all_step_visible_data
 
 
 def dynamic_tsne(all_step_original_data, perplexity=30, all_step_visible_data=None, output_dims=2, n_epochs=1000,
                  initial_lr=2400, final_lr=200, lr_switch=250, init_stdev=1e-4,
                  sigma_iters=50, initial_momentum=0.5, final_momentum=0.8,
                  momentum_switch=250, penalty_lambda=0.1, metric='euclidean',
-                 random_state=None, verbose=1):
+                 random_state=None, verbose=1, device='cpu'):
     """Compute sequence of projections from a sequence of matrices of
     observations (or distances) using dynamic t-SNE.
-    
+
     Parameters
     ----------
     all_step_original_data : list of array-likes, each with shape (n_observations, n_features), \
             or (n_observations, n_observations) if `metric` == 'precomputed'.
-        List of matrices containing the observations (one per row). If `metric` 
-        is 'precomputed', list of pairwise dissimilarity (distance) matrices. 
-        Each row in `all_step_original_data[t + 1]` should correspond to the same row in `all_step_original_data[t]`, 
+        List of matrices containing the observations (one per row). If `metric`
+        is 'precomputed', list of pairwise dissimilarity (distance) matrices.
+        Each row in `all_step_original_data[t + 1]` should correspond to the same row in `all_step_original_data[t]`,
         for every time step t > 1.
-    
+
     perplexity : float, optional (default = 30)
         Target perplexity for binary search for sigmas.
-        
+
     all_step_visible_data : list of array-likes, each with shape (n_observations, output_dims), \
             optional (default = None)
         List of matrices containing the starting positions for each point at
         each time step.
-    
+
     output_dims : int, optional (default = 2)
         Target dimension.
-        
+
     n_epochs : int, optional (default = 1000)
         Number of gradient descent iterations.
-        
+
     initial_lr : float, optional (default = 2400)
         The initial learning rate for gradient descent.
-        
+
     final_lr : float, optional (default = 200)
         The final learning rate for gradient descent.
-        
+
     lr_switch : int, optional (default = 250)
         Iteration in which the learning rate changes from initial to final.
         This option effectively subsumes early exaggeration.
-        
+
     init_stdev : float, optional (default = 1e-4)
         Standard deviation for a Gaussian distribution with zero mean from
         which the initial coordinates are sampled.
-        
+
     sigma_iters : int, optional (default = 50)
         Number of binary search iterations for target perplexity.
-        
+
     initial_momentum : float, optional (default = 0.5)
         The initial momentum for gradient descent.
-        
+
     final_momentum : float, optional (default = 0.8)
         The final momentum for gradient descent.
-        
+
     momentum_switch : int, optional (default = 250)
         Iteration in which the momentum changes from initial to final.
-        
+
     penalty_lambda : float, optional (default = 0.0)
         Movement penalty hyperparameter. Controls how much each point is
         penalized for moving across time steps.
-        
+
     metric : 'euclidean' or 'precomputed', optional (default = 'euclidean')
-        Indicates whether `original_data[t]` is composed of observations ('euclidean') 
+        Indicates whether `original_data[t]` is composed of observations ('euclidean')
         or distances ('precomputed'), for all t.
-    
+
     random_state : int or np.RandomState, optional (default = None)
         Integer seed or np.RandomState object used to initialize the
         position of each point. Defaults to a random seed.
 
     verbose : bool (default = 1)
-        Indicates whether progress information should be sent to standard 
+        Indicates whether progress information should be sent to standard
         output.
-        
+
     Returns
     -------
     all_step_visible_data : list of array-likes, each with shape (n_observations, output_dims)
-        List of matrices representing the sequence of projections. 
-        Each row (point) in `all_step_visible_data[t]` corresponds to a row (observation or 
+        List of matrices representing the sequence of projections.
+        Each row (point) in `all_step_visible_data[t]` corresponds to a row (observation or
         distance to other observations) in the input matrix `all_step_original_data[t]`, for all t.
     """
     random_state = check_random_state(random_state)
@@ -194,22 +243,25 @@ def dynamic_tsne(all_step_original_data, perplexity=30, all_step_visible_data=No
             raise Exception('Invalid datasets.')
 
         all_step_original_data[t] = np.array(all_step_original_data[t], dtype=floath)
+        all_step_visible_data[t] = np.array(all_step_visible_data[t], dtype=floath)
 
-    all_step_original_data_shared, all_step_visible_data_shared, sigmas_shared = [], [], []
+    if isinstance(all_step_visible_data, list):
+        all_step_visible_data = np.stack(all_step_visible_data, axis=0)
+
+    all_step_sigmas = []
     for t in range(steps):
-        original_data_shared = theano.shared(all_step_original_data[t])
-        sigma_shared = theano.shared(np.ones(N, dtype=floath))
+        original_data = all_step_original_data[t]
 
-        find_sigma(original_data_shared, sigma_shared, N, perplexity, sigma_iters,
-                   metric=metric, verbose=verbose)
+        sigma = find_sigma(original_data, np.ones(N, dtype=floath), N, perplexity, sigma_iters,
+                           metric=metric, verbose=verbose, device='cpu')
 
-        all_step_original_data_shared.append(original_data_shared)
-        all_step_visible_data_shared.append(theano.shared(np.array(all_step_visible_data[t], dtype=floath)))
-        sigmas_shared.append(sigma_shared)
+        all_step_sigmas.append(sigma)
 
-    all_step_visible_data = find_all_step_visible_data(all_step_original_data_shared, all_step_visible_data_shared,
-                                                       sigmas_shared, N, steps, output_dims,
+    all_step_sigmas = np.stack(all_step_sigmas, axis=0)
+    all_step_visible_data = find_all_step_visible_data(all_step_original_data, all_step_visible_data,
+                                                       all_step_sigmas, N, steps, output_dims,
                                                        n_epochs, initial_lr, final_lr, lr_switch, initial_momentum,
-                                                       final_momentum, momentum_switch, penalty_lambda, metric, verbose)
+                                                       final_momentum, momentum_switch, penalty_lambda, metric, verbose,
+                                                       device=device)
 
     return all_step_visible_data

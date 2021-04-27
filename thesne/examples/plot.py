@@ -1,6 +1,7 @@
 import numpy as np
-import matplotlib as plt
-import pylab
+import matplotlib
+import matplotlib.pyplot as plt
+
 
 hsv_colors = [(0.56823266219239377, 0.82777777777777772, 0.70588235294117652),
               (0.078146611341632088, 0.94509803921568625, 1.0),
@@ -13,10 +14,13 @@ hsv_colors = [(0.56823266219239377, 0.82777777777777772, 0.70588235294117652),
               (0.16774193548387095, 0.82010582010582012, 0.74117647058823533),
               (0.51539855072463769, 0.88888888888888884, 0.81176470588235294)]
 
-rgb_colors = plt.colors.hsv_to_rgb(np.array(hsv_colors).reshape(10, 1, 3))
-colors = plt.colors.ListedColormap(rgb_colors.reshape(10, 3))
+rgb_colors = matplotlib.colors.hsv_to_rgb(np.array(hsv_colors).reshape(10, 1, 3))
+colors = matplotlib.colors.ListedColormap(rgb_colors.reshape(10, 3))
 
 
-def plot(Y, labels):
-    pylab.scatter(Y[:, 0], Y[:, 1], s=30, c=labels, cmap=colors, linewidth=0)
-    pylab.show()
+def plot(step, Y, labels, save_path):
+    figure = plt.figure()
+    plt.scatter(Y[:, 0], Y[:, 1], s=30, c=labels, cmap=colors, linewidth=0)
+    plt.colorbar()
+    plt.title(f'{step} step projection figure')
+    figure.savefig(f'{save_path}/{step}_step.png')
