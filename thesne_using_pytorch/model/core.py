@@ -81,8 +81,7 @@ def find_sigma(original_data, sigma, N, perplexity, sigma_iters,
 
         if verbose:
             print('Iteration: {0}.'.format(i + 1))
-            print('Perplexities in [{0:.4f}, {1:.4f}].'.format(np.exp(entropy.to('cpu').detach().numpy().copy().min()),
-                                                               np.exp(entropy.to('cpu').detach().numpy().copy().max())))
+            print('Perplexities in [{0:.4f}, {1:.4f}].'.format(torch.exp(torch.min(entropy)), torch.exp(torch.max(entropy))))
 
     if np.any(np.isnan(np.exp(entropy.to('cpu').detach().numpy().copy()))):
         raise Exception('Invalid sigmas. The perplexity is probably too low.')

@@ -42,9 +42,9 @@ def find_all_step_visible_data(all_step_original_data, all_step_visible_data, al
     all_step_sigmas_tensors = torch.from_numpy(all_step_sigmas).clone().to(device)
 
     all_step_visible_data_tensors.requires_grad_(True)
+
     # Momentum-based gradient descent
     epoch = 0
-    prev_cost = 0
     while True:
         if epoch == lr_switch:
             lr_tensor = torch.from_numpy(np.array(final_lr, dtype=floath)).to(device)
@@ -62,91 +62,28 @@ def find_all_step_visible_data(all_step_original_data, all_step_visible_data, al
         cost.backward()
 
         with torch.no_grad():
+
             # Setting update for all_step_visible_data velocities
             all_step_visible_progress_tensors = \
                 momentum_tensor * all_step_visible_progress_tensors - lr_tensor * all_step_visible_data_tensors.grad
+
             # Setting update for all_step_visible_data positions
             all_step_visible_data_tensors += all_step_visible_progress_tensors
             all_step_visible_data_tensors.grad.zero_()
 
         if verbose:
-            print(f'Epoch: {epoch + 1}. KL_loss: {float(kl_loss.to("cpu").detach().numpy().copy())}, penalty: {float(penalty.to("cpu").detach().numpy().copy())}')
+            print(f'Epoch: {epoch + 1}. KL_loss: {kl_loss}, penalty: {penalty}')
         epoch += 1
 
-        if epoch >= n_epochs and torch.tensor(prev_cost).float().to(device) - cost < torch.tensor(0.00001).float().to(device):
+        if epoch >= n_epochs:
             break
-        prev_cost = float(cost.to("cpu").detach().numpy().copy())
 
     final_all_step_visible_data = []
+
     for t in range(steps):
         final_all_step_visible_data.append(all_step_visible_data_tensors[t].to('cpu').detach().numpy().copy())
 
     return final_all_step_visible_data
-
-
-# def find_all_step_visible_data(all_step_original_data, all_step_visible_data, all_step_sigmas, N, steps,
-#                                output_dims, n_epochs, initial_lr, final_lr, lr_switch, initial_momentum,
-#                                final_momentum, momentum_switch, penalty_lambda, metric, verbose=0, device='cpu'):
-#     """Optimize cost wrt all_step_visible_data[t], simultaneously for all t"""
-#
-#     # Optimization hyper-parameters
-#     lr_tensor = torch.from_numpy(np.array(initial_lr, dtype=floath)).to(device)
-#     momentum_tensor = torch.from_numpy(np.array(initial_momentum, dtype=floath)).to(device)
-#
-#     # Penalty hyper-parameter
-#     penalty_lambda_tensor = torch.from_numpy(np.array(penalty_lambda, dtype=floath)).to(device)
-#
-#     # Cost
-#     all_step_original_data_tensors = torch.from_numpy(all_step_original_data).clone().to(device)
-#     all_step_visible_data_tensors = torch.tensor(all_step_visible_data.copy()).float().to(device)
-#     all_step_visible_progress_tensors = torch.from_numpy(np.zeros((steps, N, output_dims), dtype=floath)).to(device)
-#     all_step_sigmas_tensors = torch.from_numpy(all_step_sigmas).clone().to(device)
-#
-#     # Momentum-based gradient descent
-#     for epoch in range(n_epochs):
-#         if epoch == lr_switch:
-#             lr_tensor = torch.from_numpy(np.array(final_lr, dtype=floath)).to(device)
-#         if epoch == momentum_switch:
-#             momentum_tensor = torch.from_numpy(np.array(final_momentum, dtype=floath)).to(device)
-#
-#         all_step_grad_kl_loss = torch.zeros(steps, N, output_dims).to(device)
-#         all_step_v = torch.zeros(steps, N, output_dims).to(device)
-#         c_vars = torch.zeros(steps).to(device)
-#         for t in range(steps):
-#             subtract_mat = create_subtract_matrix(all_step_visible_data_tensors[t], device).permute(2, 0, 1)
-#             original_simul_prob = calc_original_simul_prob(all_step_original_data_tensors[t], all_step_sigmas_tensors[t], metric)
-#             visual_simul_prob = calc_visible_simul_prob(all_step_visible_data_tensors[t])
-#             denominator = calc_square_euclidean_norms(all_step_visible_data_tensors[t]) + 1
-#
-#             all_step_grad_kl_loss[t] = 4 * (subtract_mat * (original_simul_prob - visual_simul_prob) / denominator).sum(dim=1).permute(1, 0)
-#             if t == 0:
-#                 all_step_v[t] = all_step_visible_data_tensors[t] - all_step_visible_data_tensors[t+1]
-#             elif t == steps - 1:
-#                 all_step_v[t] = all_step_visible_data_tensors[t] - all_step_visible_data_tensors[t - 1]
-#             else:
-#                 all_step_v[t] = 2 * all_step_visible_data_tensors[t] - \
-#                                 (all_step_visible_data_tensors[t - 1] + all_step_visible_data_tensors[t + 1])
-#
-#             c_vars[t] = cost_var(all_step_original_data_tensors[t], all_step_visible_data_tensors[t],
-#                                  all_step_sigmas_tensors[t], metric, device=device)
-#         cost = torch.sum(c_vars) + penalty_lambda_tensor * movement_penalty(all_step_visible_data_tensors, N, device=device)
-#
-#         all_step_cost_grad = all_step_grad_kl_loss + penalty_lambda_tensor * all_step_v / N
-#
-#         # Setting update for all_step_visible_data velocities
-#         all_step_visible_progress_tensors = \
-#             momentum_tensor * all_step_visible_progress_tensors - lr_tensor * all_step_cost_grad
-#         # Setting update for all_step_visible_data positions
-#         all_step_visible_data_tensors += all_step_visible_progress_tensors
-#
-#         if verbose:
-#             print('Epoch: {0}. Cost: {1:.6f}.'.format(epoch + 1, float(cost.to('cpu').detach().numpy().copy())))
-#
-#     final_all_step_visible_data = []
-#     for t in range(steps):
-#         final_all_step_visible_data.append(all_step_visible_data_tensors[t].to('cpu').detach().numpy().copy())
-#
-#     return final_all_step_visible_data
 
 
 def dynamic_tsne(all_step_original_data, perplexity=30, all_step_visible_data=None, output_dims=2, n_epochs=1000,

@@ -4,7 +4,8 @@ from sklearn.utils import check_random_state
 import os
 import sys
 
-sys.path.append('/home/lab/akira/MusicVisualization/thesne/thesne')
+dir_path = 'please set full path of this directory'
+sys.path.append(dir_path)
 from model.dynamic_tsne import dynamic_tsne
 from examples import plot
 
@@ -40,8 +41,8 @@ def create_blobs(classes=10, dims=100, class_size=100, variance=0.1, steps=4, ad
 
 def main():
     seed = 0
-    steps = 10
-    all_step_original_data, class_label_list = create_blobs(classes=10, class_size=200, dims=100, advection_ratio=0.1,
+    steps = 30
+    all_step_original_data, class_label_list = create_blobs(classes=30, class_size=15, dims=128, advection_ratio=0.1,
                                                             steps=steps, random_state=seed)
 
     all_step_visible_data = dynamic_tsne(all_step_original_data, perplexity=70, penalty_lambda=0.1, verbose=1,
@@ -54,7 +55,8 @@ def main():
 
 
 if __name__ == "__main__":
-    save_path = '/home/data/akira/music_visualization_res/thesne_res'
+    save_path = 'please set your full path for saving figures'
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     device = torch.device(f'cuda:{os.environ["CUDA_VISIBLE_DEVICES"]}') if torch.cuda.is_available() else torch.device('cpu')
+    print(f'device: {device} is using.')
     main()
