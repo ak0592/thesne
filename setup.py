@@ -20,9 +20,9 @@ setuptools.setup(
     ],
     python_requires='>=3.6',
     install_require=[
-    	"numpy",
-		"theano",
-		"sklearn",
-		"pandas"
-	],
+	    "numpy",
+	    "theano",
+	    "sklearn",
+	    "pandas"
+    ],
 )
