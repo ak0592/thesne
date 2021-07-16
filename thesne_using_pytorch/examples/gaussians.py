@@ -4,8 +4,9 @@ from sklearn.utils import check_random_state
 import os
 import sys
 
-dir_path = 'please set full path of this directory'
+dir_path = 'set your repository that you put this thesne_using_pytorch'
 sys.path.append(dir_path)
+from model.tsne import tsne
 from model.dynamic_tsne import dynamic_tsne
 from examples import plot
 
@@ -41,22 +42,29 @@ def create_blobs(classes=10, dims=100, class_size=100, variance=0.1, steps=4, ad
 
 def main():
     seed = 0
-    steps = 30
-    all_step_original_data, class_label_list = create_blobs(classes=30, class_size=15, dims=128, advection_ratio=0.1,
+    steps = 15
+    output_dims = 2
+    all_step_original_data, class_label_list = create_blobs(classes=10, class_size=200, dims=100, advection_ratio=0.1,
                                                             steps=steps, random_state=seed)
 
     all_step_visible_data = dynamic_tsne(all_step_original_data, perplexity=70, penalty_lambda=0.1, verbose=1,
-                                         sigma_iters=50, random_state=seed, device=device)
+                                         output_dims=output_dims, sigma_iters=50, random_state=seed, device=device)
 
     for step, visible_data in enumerate(all_step_visible_data):
-        plot.plot(step, visible_data, class_label_list, save_path)
+        plot.plot(step, visible_data, class_label_list, f'{save_path}/{steps}steps_gaussian/dynamic_t_sne')
+
+    for step in range(steps):
+        visible_data = tsne(all_step_original_data[step], perplexity=70, verbose=1, output_dims=output_dims,
+                            sigma_iters=50, random_state=seed, device=device)
+        plot.plot(step, visible_data, class_label_list, f'{save_path}/{steps}steps_gaussian/t_sne')
 
     print('visualize is completed.')
 
 
 if __name__ == "__main__":
-    save_path = 'please set your full path for saving figures'
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    device = torch.device(f'cuda:{os.environ["CUDA_VISIBLE_DEVICES"]}') if torch.cuda.is_available() else torch.device('cpu')
+    save_path = 'set your directory to save plot.'
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device(
+        'cpu')
     print(f'device: {device} is using.')
     main()

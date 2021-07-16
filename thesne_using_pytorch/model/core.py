@@ -12,12 +12,14 @@ def calc_square_euclidean_norms(X):
     return ss.reshape(N, 1) + ss.reshape(1, N) - 2 * torch.mm(X, torch.t(X))
 
 
-def calc_original_cond_prob(X, sigma, metric):
+def calc_original_cond_prob(X, sigma, metric, square_distances):
     N = X.size()[0]
 
     if metric == 'euclidean':
         data_distances = calc_square_euclidean_norms(X)
     elif metric == 'precomputed':
+        data_distances = X
+    elif metric != 'euclidean' and square_distances is True:
         data_distances = X ** 2
     else:
         raise Exception('Invalid metric')
@@ -30,8 +32,8 @@ def calc_original_cond_prob(X, sigma, metric):
     return esqdistance_zd / row_sum  # Possibly dangerous
 
 
-def calc_original_simul_prob(original_data_tensor, sigma_tensor, metric):
-    p_Xp_given_X = calc_original_cond_prob(original_data_tensor, sigma_tensor, metric)
+def calc_original_simul_prob(original_data_tensor, sigma_tensor, metric, square_distances):
+    p_Xp_given_X = calc_original_cond_prob(original_data_tensor, sigma_tensor, metric, square_distances)
 
     return (p_Xp_given_X + torch.t(p_Xp_given_X)) / (2 * p_Xp_given_X.size()[0])
 
@@ -43,10 +45,10 @@ def calc_visible_simul_prob(Y):
     return numerators / numerators.sum()  # Possibly dangerous
 
 
-def cost_var(original_data_tensor, visible_data_tensor, sigma_tensor, metric, device='cpu'):
+def cost_var(original_data_tensor, visible_data_tensor, sigma_tensor, metric, square_distances, device='cpu'):
     epsilon_tensor = torch.tensor(epsilon).float().to(device)
 
-    original_simul_prob = calc_original_simul_prob(original_data_tensor, sigma_tensor, metric)
+    original_simul_prob = calc_original_simul_prob(original_data_tensor, sigma_tensor, metric, square_distances)
     visible_simul_prob = calc_visible_simul_prob(visible_data_tensor)
 
     PXc = torch.maximum(original_simul_prob, epsilon_tensor)
@@ -57,8 +59,10 @@ def cost_var(original_data_tensor, visible_data_tensor, sigma_tensor, metric, de
 
 
 def find_sigma(original_data, sigma, N, perplexity, sigma_iters,
-               metric, verbose=0, device='cpu'):
+               metric, square_distances, verbose=0, device='cpu'):
     """Binary search on sigma for a given perplexity."""
+    if verbose:
+        print(f'find sigma is using {device}')
     original_data_tensor = torch.from_numpy(original_data).clone().to(device)
     sigma_tensor = torch.from_numpy(sigma).clone().to(device)
 
@@ -70,7 +74,7 @@ def find_sigma(original_data, sigma, N, perplexity, sigma_iters,
     sigmax = torch.from_numpy(np.full(N, np.inf, dtype=floath)).to(device)
 
     for i in range(sigma_iters):
-        P = torch.maximum(calc_original_cond_prob(original_data_tensor, sigma_tensor, metric), epsilon_tensor)
+        P = torch.maximum(calc_original_cond_prob(original_data_tensor, sigma_tensor, metric, square_distances), epsilon_tensor)
         entropy = -torch.sum(P * torch.log(P), dim=1)
 
         sigmin = torch.where(torch.lt(entropy, target), sigma_tensor, sigmin)

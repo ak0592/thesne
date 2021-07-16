@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import matplotlib
 import matplotlib.pyplot as plt
 
@@ -19,8 +20,11 @@ colors = matplotlib.colors.ListedColormap(rgb_colors.reshape(10, 3))
 
 
 def plot(step, Y, labels, save_path):
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
     figure = plt.figure()
     plt.scatter(Y[:, 0], Y[:, 1], s=30, c=labels, cmap=colors, linewidth=0)
     plt.colorbar()
     plt.title(f'{step} step projection figure')
     figure.savefig(f'{save_path}/{step}_step.png')
+    plt.close()

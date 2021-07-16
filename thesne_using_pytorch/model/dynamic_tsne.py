@@ -25,7 +25,7 @@ def create_subtract_matrix(one_step_tensor, device='cpu'):
 
 def find_all_step_visible_data(all_step_original_data, all_step_visible_data, all_step_sigmas, N, steps,
                                output_dims, n_epochs, initial_lr, final_lr, lr_switch, initial_momentum,
-                               final_momentum, momentum_switch, penalty_lambda, metric, verbose=0, device='cpu'):
+                               final_momentum, momentum_switch, penalty_lambda, metric, square_distances, verbose=0, device='cpu'):
     """Optimize cost wrt all_step_visible_data[t], simultaneously for all t"""
 
     # Optimization hyper-parameters
@@ -54,7 +54,7 @@ def find_all_step_visible_data(all_step_original_data, all_step_visible_data, al
         c_vars = torch.zeros(steps).to(device)
         for t in range(steps):
             c_vars[t] = cost_var(all_step_original_data_tensors[t], all_step_visible_data_tensors[t], all_step_sigmas_tensors[t],
-                                 metric, device=device)
+                                 metric, square_distances, device=device)
 
         penalty = movement_penalty(all_step_visible_data_tensors, N, device=device)
         kl_loss = torch.sum(c_vars)
@@ -90,13 +90,13 @@ def dynamic_tsne(all_step_original_data, perplexity=30, all_step_visible_data=No
                  initial_lr=2400, final_lr=200, lr_switch=250, init_stdev=1e-4,
                  sigma_iters=50, initial_momentum=0.5, final_momentum=0.8,
                  momentum_switch=250, penalty_lambda=0.1, metric='euclidean',
-                 random_state=None, verbose=1, device='cpu'):
+                 random_state=None, square_distances='legacy', verbose=1, device='cpu'):
     """Compute sequence of projections from a sequence of matrices of
     observations (or distances) using dynamic t-SNE.
 
     Parameters
     ----------
-    all_step_original_data : list of array-likes, each with shape (n_observations, n_features), \
+    all_step_original_data : list of array-likes,xxx each with shape (n_observations, n_features), \
             or (n_observations, n_observations) if `metric` == 'precomputed'.
         List of matrices containing the observations (one per row). If `metric`
         is 'precomputed', list of pairwise dissimilarity (distance) matrices.
@@ -167,6 +167,8 @@ def dynamic_tsne(all_step_original_data, perplexity=30, all_step_visible_data=No
         distance to other observations) in the input matrix `all_step_original_data[t]`, for all t.
     """
     random_state = check_random_state(random_state)
+    if verbose:
+        print(f'dynamic_tsne is using {device}')
 
     steps = len(all_step_original_data)
     N = all_step_original_data[0].shape[0]
@@ -190,7 +192,7 @@ def dynamic_tsne(all_step_original_data, perplexity=30, all_step_visible_data=No
         original_data = all_step_original_data[t]
 
         sigma = find_sigma(original_data, np.ones(N, dtype=floath), N, perplexity, sigma_iters,
-                           metric=metric, verbose=verbose, device='cpu')
+                           metric, square_distances, verbose=verbose, device=device)
 
         all_step_sigmas.append(sigma)
 
@@ -198,7 +200,7 @@ def dynamic_tsne(all_step_original_data, perplexity=30, all_step_visible_data=No
     all_step_visible_data = find_all_step_visible_data(all_step_original_data, all_step_visible_data,
                                                        all_step_sigmas, N, steps, output_dims,
                                                        n_epochs, initial_lr, final_lr, lr_switch, initial_momentum,
-                                                       final_momentum, momentum_switch, penalty_lambda, metric, verbose,
-                                                       device=device)
+                                                       final_momentum, momentum_switch, penalty_lambda, metric,
+                                                       square_distances, verbose, device=device)
 
     return all_step_visible_data
